@@ -1,9 +1,4 @@
-"""
-Dashboard SCIAN — Streamlit
-Ejecutar:
-  & "C:\\ruta\\python.exe" -m streamlit run "C:\\ruta\\dashboard_scian.py"
-"""
-
+# Dashboard SCIAN — Streamlit
 import io, json, os, re
 from collections import defaultdict, Counter
 import pandas as pd
@@ -12,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONFIG
+# CONFIGURACIÓN
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(page_title="SCIAN Analytics", page_icon="📊",
@@ -38,6 +33,15 @@ BASE = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             legend=dict(bgcolor="rgba(0,0,0,0)"),
             margin=dict(l=20, r=20, t=40, b=20))
 
+COLORES_NIVEL = {
+    "0 — Inactivo":      "#64748B",
+    "1-10 — Bajo":       "#1F4E79",
+    "11-100 — Medio":    "#2E75B6",
+    "101-1,000 — Alto":  "#60A5FA",
+    "1,001+ — Muy alto": "#F59E0B",
+}
+ORDEN_NIVEL = list(COLORES_NIVEL.keys())
+
 def lay(fig, **kw):
     fig.update_layout(**{**BASE, **kw}); return fig
 
@@ -57,19 +61,27 @@ def kpi(label, value, sub=""):
 def sec(txt): st.markdown(f'<p class="sec-title">{txt}</p>', unsafe_allow_html=True)
 def div():    st.markdown('<hr class="div">', unsafe_allow_html=True)
 
-def bar_h(df_in, x_col, y_col, nom_col, pct_col, title):
-    df_in = df_in.copy(); df_in[y_col] = df_in[y_col].astype(str)
+def nivel_cfdi(n):
+    if n == 0:      return "0 — Inactivo"
+    elif n <= 10:   return "1-10 — Bajo"
+    elif n <= 100:  return "11-100 — Medio"
+    elif n <= 1000: return "101-1,000 — Alto"
+    else:           return "1,001+ — Muy alto"
+
+def bar_h(df_in, x_col, y_col, nom_col, pct_col, title, colorscale=None):
+    df_in = df_in.copy()
+    df_in[y_col] = df_in[y_col].astype(str)
+    cs = colorscale or [[0,"#1F4E79"],[1,"#60A5FA"]]
     fig = go.Figure(go.Bar(
         x=df_in[x_col], y=df_in[y_col], orientation="h",
-        marker=dict(color=df_in[x_col],
-                    colorscale=[[0,"#1F4E79"],[1,"#60A5FA"]],
+        marker=dict(color=df_in[x_col], colorscale=cs,
                     cmin=0, cmax=df_in[x_col].max()),
         customdata=list(zip(df_in[nom_col], df_in[pct_col])),
-        hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>RFCs: %{x}<br>%{customdata[1]}%<extra></extra>",
+        hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>%{x:,}<br>%{customdata[1]}%<extra></extra>",
         text=df_in[pct_col].astype(str)+"%", textposition="outside",
         textfont=dict(color="#94A3B8", size=10),
     ))
-    lay(fig, title=title, xaxis=dict(title="RFCs", **GRID),
+    lay(fig, title=title, xaxis=dict(**GRID),
         yaxis=dict(type="category", categoryorder="total ascending",
                    gridcolor="#2A3441", tickfont=dict(size=11)))
     return fig
@@ -85,7 +97,7 @@ def grafica_combos(combos_df, title):
         textfont=dict(color="#94A3B8", size=10),
         hovertemplate="<b>%{y}</b><br>%{customdata}<br>RFCs: %{x}<extra></extra>",
     ))
-    lay(fig, title=title, xaxis=dict(title="RFCs", **GRID),
+    lay(fig, title=title, xaxis=dict(**GRID),
         yaxis=dict(type="category", categoryorder="total ascending",
                    gridcolor="#2A3441", tickfont=dict(size=10)))
     return fig
@@ -118,7 +130,7 @@ def grafica_top_div(top_df, title):
                       "Company: %{customdata[2]}<br>"
                       "Total: %{x}<br>Secundarias: %{customdata[1]}<extra></extra>",
     ))
-    lay(fig, title=title, xaxis=dict(title="N° actividades", **GRID),
+    lay(fig, title=title, xaxis=dict(**GRID),
         yaxis=dict(type="category", categoryorder="total ascending",
                    gridcolor="#2A3441", tickfont=dict(size=9)))
     return fig
@@ -138,6 +150,136 @@ def get_div(df_in):
             .agg(total_act=("sub_cod","count"),
                  act_sec=("tipo_act", lambda x: (x=="Secundaria").sum()))
             .reset_index())
+
+def seccion_cfdis_global(df_cfdis, TOT, total_cfdis):
+    """Gráficas de CFDIs para vista global."""
+    cfdis_sec = (df_cfdis.groupby(["sec_cod","sec_nom"])
+                 .agg(total_cfdis=("cfdis","sum"),
+                      n_rfcs=("rfc","count"),
+                      prom=("cfdis","mean"))
+                 .reset_index().sort_values("total_cfdis", ascending=False))
+    cfdis_sec["prom"] = cfdis_sec["prom"].round(1)
+    cfdis_sec["pct"]  = (cfdis_sec["total_cfdis"] / total_cfdis * 100).round(1) if total_cfdis else 0
+
+    ga, gb = st.columns(2)
+    with ga:
+        fig = go.Figure(go.Bar(
+            x=cfdis_sec["total_cfdis"], y=cfdis_sec["sec_cod"].astype(str),
+            orientation="h",
+            marker=dict(color=cfdis_sec["total_cfdis"],
+                        colorscale=[[0,"#1F4E79"],[1,"#60A5FA"]]),
+            customdata=list(zip(cfdis_sec["sec_nom"], cfdis_sec["prom"], cfdis_sec["pct"])),
+            text=cfdis_sec["pct"].astype(str)+"%", textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>"
+                          "Total: %{x:,}<br>Prom/RFC: %{customdata[1]:,}<br>"
+                          "%{customdata[2]}%<extra></extra>",
+        ))
+        lay(fig, title="Total CFDIs por Sector", xaxis=dict(**GRID),
+            yaxis=dict(type="category", categoryorder="total ascending",
+                       gridcolor="#2A3441", tickfont=dict(size=11)))
+        pch(fig)
+
+    with gb:
+        fig = go.Figure(go.Bar(
+            x=cfdis_sec["prom"], y=cfdis_sec["sec_cod"].astype(str),
+            orientation="h",
+            marker=dict(color=cfdis_sec["prom"],
+                        colorscale=[[0,"#375623"],[1,"#6AAB49"]]),
+            customdata=list(zip(cfdis_sec["sec_nom"], cfdis_sec["n_rfcs"])),
+            text=cfdis_sec["prom"].astype(str), textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>"
+                          "Promedio: %{x:,}<br>RFCs: %{customdata[1]}<extra></extra>",
+        ))
+        lay(fig, title="Promedio CFDIs por RFC — por Sector", xaxis=dict(**GRID),
+            yaxis=dict(type="category", categoryorder="total ascending",
+                       gridcolor="#2A3441", tickfont=dict(size=11)))
+        pch(fig)
+
+    cfdis_sub = (df_cfdis.groupby(["sub_cod","sub_nom"])
+                 .agg(total_cfdis=("cfdis","sum"),
+                      n_rfcs=("rfc","count"),
+                      prom=("cfdis","mean"))
+                 .reset_index().sort_values("total_cfdis", ascending=False))
+    cfdis_sub["prom"] = cfdis_sub["prom"].round(1)
+    cfdis_sub["pct"]  = (cfdis_sub["total_cfdis"] / total_cfdis * 100).round(1) if total_cfdis else 0
+
+    top_nc = st.slider("Top N subsectores — CFDIs", 5, min(50,len(cfdis_sub)), 15, key="sl_cfdis")
+    dt_c   = cfdis_sub.head(top_nc)
+
+    ga2, gb2 = st.columns(2)
+    with ga2:
+        fig = go.Figure(go.Bar(
+            x=dt_c["total_cfdis"], y=dt_c["sub_cod"].astype(str),
+            orientation="h",
+            marker=dict(color=dt_c["total_cfdis"],
+                        colorscale=[[0,"#1F4E79"],[1,"#60A5FA"]]),
+            customdata=list(zip(dt_c["sub_nom"], dt_c["pct"])),
+            text=dt_c["pct"].astype(str)+"%", textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>"
+                          "Total: %{x:,}<br>%{customdata[1]}%<extra></extra>",
+        ))
+        lay(fig, title=f"Top {top_nc} Subsectores — Total CFDIs", xaxis=dict(**GRID),
+            yaxis=dict(type="category", categoryorder="total ascending",
+                       gridcolor="#2A3441", tickfont=dict(size=11)))
+        pch(fig)
+
+    with gb2:
+        fig = go.Figure(go.Bar(
+            x=dt_c["prom"], y=dt_c["sub_cod"].astype(str),
+            orientation="h",
+            marker=dict(color=dt_c["prom"],
+                        colorscale=[[0,"#375623"],[1,"#6AAB49"]]),
+            customdata=list(zip(dt_c["sub_nom"], dt_c["n_rfcs"])),
+            text=dt_c["prom"].astype(str), textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>"
+                          "Promedio: %{x:,}<br>RFCs: %{customdata[1]}<extra></extra>",
+        ))
+        lay(fig, title=f"Top {top_nc} Subsectores — Promedio CFDIs por RFC", xaxis=dict(**GRID),
+            yaxis=dict(type="category", categoryorder="total ascending",
+                       gridcolor="#2A3441", tickfont=dict(size=11)))
+        pch(fig)
+
+def seccion_nivel_cfdis(df_cfdis, total, key_suffix=""):
+    """Segmentación por nivel de actividad CFDI."""
+    df_cfdis = df_cfdis.copy()
+    df_cfdis["nivel"] = df_cfdis["cfdis"].apply(nivel_cfdi)
+
+    dist_n = (df_cfdis["nivel"].value_counts()
+              .reindex(ORDEN_NIVEL, fill_value=0)
+              .reset_index().rename(columns={"nivel":"Nivel","count":"RFCs"}))
+    dist_n["pct"] = (dist_n["RFCs"] / total * 100).round(1)
+
+    ga, gb = st.columns(2)
+    with ga:
+        fig = go.Figure(go.Bar(
+            x=dist_n["Nivel"], y=dist_n["RFCs"],
+            marker_color=[COLORES_NIVEL[n] for n in dist_n["Nivel"]],
+            customdata=dist_n["pct"],
+            text=dist_n["pct"].astype(str)+"%", textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            hovertemplate="<b>%{x}</b><br>RFCs: %{y}<br>%{customdata}%<extra></extra>",
+        ))
+        lay(fig, title="Distribución por Nivel de Actividad CFDI",
+            xaxis=dict(**GRID), yaxis=dict(title="RFCs", gridcolor="#2A3441"))
+        pch(fig)
+
+    with gb:
+        niv_sec = df_cfdis.groupby(["sec_cod","nivel"]).size().reset_index(name="RFCs")
+        fig = px.bar(niv_sec, x="RFCs", y="sec_cod", color="nivel",
+                     orientation="h", barmode="stack",
+                     labels={"sec_cod":"","RFCs":"RFCs","nivel":""},
+                     title="Nivel de Actividad por Sector",
+                     color_discrete_map=COLORES_NIVEL,
+                     category_orders={"nivel": ORDEN_NIVEL})
+        fig.update_traces(
+            hovertemplate="<b>%{y}</b><br>%{fullData.name}<br>RFCs: %{x}<extra></extra>")
+        lay(fig, xaxis=dict(**GRID),
+            yaxis=dict(type="category", gridcolor="#2A3441"))
+        pch(fig)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -185,26 +327,36 @@ def tp(rfc):
 def build_df(rfcs_json, cat_sec, cat_sub):
     rows = []
     for e in json.loads(rfcs_json):
-        rfc  = str(e.get("Rfc","")).strip()
-        cid  = str(e.get("CompanyId","Sin Company"))
-        tipo = tp(rfc)
+        rfc   = str(e.get("Rfc","")).strip()
+        cid   = str(e.get("CompanyId","Sin Company"))
+        tipo  = tp(rfc)
+        count = e.get("Count", 0) or 0
+        sync_raw = e.get("SyncDate", None)
+        if isinstance(sync_raw, dict):
+            sync_raw = sync_raw.get("$date", None)
+        try:
+            sync_date = pd.to_datetime(sync_raw).date() if sync_raw else None
+        except:
+            sync_date = None
         subs = sorted(e.get("ScianSubsector",[]),
                       key=lambda x: x.get("Percentage",0), reverse=True)
         for i, s in enumerate(subs):
             cod = str(s.get("CodigoSubsectorSCIAN") or "N/A").strip()
             sc  = cod[:2] if len(cod) >= 2 else "N/A"
             rows.append({"rfc": rfc, "company": cid, "tipo": tipo,
-                         "tipo_act": "Principal" if i==0 else "Secundaria",
-                         "sub_cod": cod,
-                         "sub_nom": cat_sec.get(cod) or str(s.get("NameSubsectorSCIAN") or "Sin nombre"),
-                         "sec_cod": sc,
-                         "sec_nom": cat_sec.get(sc, "Sin clasificar"),
-                         "pct": s.get("Percentage",0)})
+                         "tipo_act":  "Principal" if i==0 else "Secundaria",
+                         "sub_cod":   cod,
+                         "sub_nom":   cat_sub.get(cod) or str(s.get("NameSubsectorSCIAN") or "Sin nombre"),
+                         "sec_cod":   sc,
+                         "sec_nom":   cat_sec.get(sc, "Sin clasificar"),
+                         "pct":       s.get("Percentage",0),
+                         "cfdis":     count,
+                         "sync_date": sync_date})
     return pd.DataFrame(rows)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GENERADOR DE EXCEL
+# REPORTE DEE EXCEL
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data
@@ -246,13 +398,18 @@ def generar_excel(rfcs_json, cat_sec_items, cat_sub_items):
                 except: pass
             ws.column_dimensions[l].width = min(mx + 4, 60)
 
-    # Procesar RFCs
     registros = []
     rfcs_por_company = {}
     for e in rfcs:
-        rfc  = str(e.get("Rfc","")).strip()
-        cid  = str(e.get("CompanyId","Sin Company"))
-        tipo = tp(rfc)
+        rfc   = str(e.get("Rfc","")).strip()
+        cid   = str(e.get("CompanyId","Sin Company"))
+        tipo  = tp(rfc)
+        count = e.get("Count", 0) or 0
+        sync_raw = e.get("SyncDate", None)
+        if isinstance(sync_raw, dict): sync_raw = sync_raw.get("$date", None)
+        try: sync_str = str(pd.to_datetime(sync_raw).date()) if sync_raw else ""
+        except: sync_str = ""
+
         subs = sorted(e.get("ScianSubsector",[]),
                       key=lambda x: x.get("Percentage",0), reverse=True)
         ppal = None; secs = []
@@ -266,9 +423,11 @@ def generar_excel(rfcs_json, cat_sec_items, cat_sub_items):
             if i == 0: ppal = info
             else: secs.append(info)
         registros.append({"rfc":rfc,"company":cid,"tipo":tipo,
-                          "principal":ppal,"secundarias":secs})
+                          "principal":ppal,"secundarias":secs,
+                          "cfdis":count,"sync":sync_str})
         rfcs_por_company.setdefault(cid, []).append(
-            {"rfc":rfc,"tipo":tipo,"principal":ppal,"secundarias":secs})
+            {"rfc":rfc,"tipo":tipo,"principal":ppal,"secundarias":secs,
+             "cfdis":count,"sync":sync_str})
 
     wb = openpyxl.Workbook(); wb.remove(wb.active)
 
@@ -276,12 +435,14 @@ def generar_excel(rfcs_json, cat_sec_items, cat_sub_items):
     ws = wb.create_sheet("1. Detalle por RFC")
     ws.freeze_panes = "A3"
     cols = ["Company ID","RFC","Tipo Persona","Tipo Actividad",
-            "Cód. Sector","Nombre Sector","Cód. Subsector","Nombre Subsector","% Actividad"]
+            "Cód. Sector","Nombre Sector","Cód. Subsector","Nombre Subsector",
+            "% Actividad","CFDIs","Última Sync"]
     for i,t in enumerate(cols,1): enc(ws.cell(row=2,column=i,value=t))
     fila = 3
     for cid in sorted(rfcs_por_company):
-        ws.merge_cells(start_row=fila,start_column=1,end_row=fila,end_column=9)
-        c = ws.cell(row=fila,column=1,value=f"  Company {cid} — {len(rfcs_por_company[cid])} RFCs")
+        ws.merge_cells(start_row=fila,start_column=1,end_row=fila,end_column=11)
+        c = ws.cell(row=fila,column=1,
+                    value=f"  Company {cid} — {len(rfcs_por_company[cid])} RFCs")
         c.font=Font(bold=True,size=11,color="FFFFFF")
         c.fill=PatternFill("solid",fgColor=C_MED)
         c.alignment=Alignment(horizontal="left",vertical="center")
@@ -290,16 +451,19 @@ def generar_excel(rfcs_json, cat_sec_items, cat_sub_items):
             p = reg["principal"]
             if p:
                 for j,v in enumerate([cid,reg["rfc"],reg["tipo"],"PRINCIPAL",
-                                       p["sec_cod"],p["sec_nom"],p["cod"],p["nom"],p["pct"]],1):
+                                       p["sec_cod"],p["sec_nom"],p["cod"],p["nom"],
+                                       p["pct"],reg["cfdis"],reg["sync"]],1):
                     cel(ws.cell(row=fila,column=j,value=v),bold=True,
-                        center=(j in [1,3,4,5,7,9]),bg=C_CLAR)
+                        center=(j in [1,3,4,5,7,9,10]),bg=C_CLAR)
                 fila+=1
             for s in reg["secundarias"]:
                 for j,v in enumerate([cid,reg["rfc"],reg["tipo"],"secundaria",
-                                       s["sec_cod"],s["sec_nom"],s["cod"],s["nom"],s["pct"]],1):
-                    cel(ws.cell(row=fila,column=j,value=v),center=(j in [1,3,4,5,7,9]))
+                                       s["sec_cod"],s["sec_nom"],s["cod"],s["nom"],
+                                       s["pct"],reg["cfdis"],reg["sync"]],1):
+                    cel(ws.cell(row=fila,column=j,value=v),
+                        center=(j in [1,3,4,5,7,9,10]))
                 fila+=1
-    ws.merge_cells(start_row=fila,start_column=1,end_row=fila,end_column=9)
+    ws.merge_cells(start_row=fila,start_column=1,end_row=fila,end_column=11)
     c=ws.cell(row=fila,column=1,value=f"TOTAL RFCs: {len(rfcs)}")
     c.font=Font(bold=True,size=11); c.fill=PatternFill("solid",fgColor=C_CLAR)
     c.alignment=Alignment(horizontal="center"); c.border=borde()
@@ -307,39 +471,47 @@ def generar_excel(rfcs_json, cat_sec_items, cat_sub_items):
 
     # Hoja 2: Resumen por Company
     ws2 = wb.create_sheet("2. Resumen por Company")
-    cols2=["Company ID","Total RFCs","Persona Moral","Persona Física",
-           "Solo Principal","Con Secundarias","Subsector Principal más frecuente"]
+    cols2=["Company ID","Total RFCs","Total CFDIs","Promedio CFDIs",
+           "Persona Moral","Persona Física","Solo Principal","Con Secundarias",
+           "Subsector Principal más frecuente"]
     for i,t in enumerate(cols2,1): enc(ws2.cell(row=1,column=i,value=t))
     for fila2,(cid,regs) in enumerate(sorted(rfcs_por_company.items()),2):
-        nm=nf=solo=con=0; cnt=Counter()
+        nm=nf=solo=con=0; cnt=Counter(); tot_cfdis=0
         for r in regs:
             if "Moral"  in r["tipo"]: nm+=1
             if "Física" in r["tipo"]: nf+=1
             if not r["secundarias"]: solo+=1
             else: con+=1
+            tot_cfdis += r["cfdis"]
             if r["principal"]: cnt[r["principal"]["cod"]+" — "+r["principal"]["nom"]]+=1
         top_sub = cnt.most_common(1)[0][0] if cnt else "—"
-        for j,v in enumerate([cid,len(regs),nm,nf,solo,con,top_sub],1):
-            cel(ws2.cell(row=fila2,column=j,value=v),center=(j!=7))
+        prom_c  = round(tot_cfdis/len(regs),1) if regs else 0
+        for j,v in enumerate([cid,len(regs),tot_cfdis,prom_c,
+                               nm,nf,solo,con,top_sub],1):
+            cel(ws2.cell(row=fila2,column=j,value=v),center=(j!=9))
     ajustar(ws2)
 
     # Hoja 3: Global Subsectores Principales
     ws3 = wb.create_sheet("3. Global - Subsectores Ppal")
     cols3=["Cód. Sector","Nombre Sector","Cód. Subsector","Nombre Subsector",
-           "Total RFCs","% del Total","Morales","Físicas"]
+           "Total RFCs","% del Total","Total CFDIs","Promedio CFDIs","Morales","Físicas"]
     for i,t in enumerate(cols3,1): enc(ws3.cell(row=1,column=i,value=t))
-    sub_agg=defaultdict(lambda:{"nom":"","sc":"","sc_nom":"","rfcs":0,"m":0,"f":0})
+    sub_agg=defaultdict(lambda:{"nom":"","sc":"","sc_nom":"",
+                                 "rfcs":0,"m":0,"f":0,"cfdis":0})
     for reg in registros:
         p=reg["principal"]
         if not p: continue
         sub_agg[p["cod"]]["nom"]=p["nom"]; sub_agg[p["cod"]]["sc"]=p["sec_cod"]
         sub_agg[p["cod"]]["sc_nom"]=p["sec_nom"]; sub_agg[p["cod"]]["rfcs"]+=1
+        sub_agg[p["cod"]]["cfdis"]+=reg["cfdis"]
         if "Moral"  in reg["tipo"]: sub_agg[p["cod"]]["m"]+=1
         if "Física" in reg["tipo"]: sub_agg[p["cod"]]["f"]+=1
     total=len(registros)
     for fila3,(cod,d) in enumerate(sorted(sub_agg.items(),key=lambda x:-x[1]["rfcs"]),2):
         pct=round(d["rfcs"]/total*100,2) if total else 0
-        for j,v in enumerate([d["sc"],d["sc_nom"],cod,d["nom"],d["rfcs"],pct,d["m"],d["f"]],1):
+        prom_c=round(d["cfdis"]/d["rfcs"],1) if d["rfcs"] else 0
+        for j,v in enumerate([d["sc"],d["sc_nom"],cod,d["nom"],
+                               d["rfcs"],pct,d["cfdis"],prom_c,d["m"],d["f"]],1):
             cel(ws3.cell(row=fila3,column=j,value=v),center=(j not in [2,4]))
     ajustar(ws3)
 
@@ -350,7 +522,7 @@ def generar_excel(rfcs_json, cat_sec_items, cat_sub_items):
     dups={r:cs for r,cs in rfc_comp.items() if len(cs)>1}
     if not dups:
         ws4.merge_cells("A1:D1")
-        c=ws4.cell(row=1,column=1,value="✅  No se encontraron RFCs duplicados entre companies.")
+        c=ws4.cell(row=1,column=1,value="✅  No se encontraron RFCs duplicados.")
         c.font=Font(bold=True,size=11,color="375623")
         c.fill=PatternFill("solid",fgColor=C_VERDE)
         c.alignment=Alignment(horizontal="center"); c.border=borde()
@@ -388,9 +560,10 @@ TOT_CMP = df_p["company"].nunique()
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown("<h2 style='color:#60A5FA;font-size:1.3rem;margin-bottom:4px;'>📊 SCIAN Analytics</h2>"
-                "<p style='color:#64748B;font-size:.8rem;margin-top:0;'>Sistema de Clasificación Industrial</p>",
-                unsafe_allow_html=True)
+    st.markdown(
+        "<h2 style='color:#60A5FA;font-size:1.3rem;margin-bottom:4px;'>📊 SCIAN Analytics</h2>"
+        "<p style='color:#64748B;font-size:.8rem;margin-top:0;'>Sistema de Clasificación Industrial</p>",
+        unsafe_allow_html=True)
     st.divider()
     vista = st.radio("Vista", ["🌐  Global", "🏢  Por Empresa"], label_visibility="collapsed")
     st.divider()
@@ -425,7 +598,7 @@ if vista == "🌐  Global":
                 "Universo total de RFCs · actividad principal por RFC</p>", unsafe_allow_html=True)
     div()
 
-    # KPIs
+    # KPIs generales
     n_m = (df_p["tipo"]=="Persona Moral").sum()
     n_f = (df_p["tipo"]=="Persona Física").sum()
     dup = df_p.groupby("rfc")["company"].nunique()
@@ -461,7 +634,7 @@ if vista == "🌐  Global":
                      title="Moral vs Física por Sector", custom_data=["sec_label"])
         fig.update_traces(
             hovertemplate="<b>%{y}</b> · %{customdata[0]}<br>RFCs: %{x}<extra></extra>")
-        lay(fig, xaxis=dict(title="RFCs",**GRID),
+        lay(fig, xaxis=dict(**GRID),
             yaxis=dict(type="category", gridcolor="#2A3441", tickfont=dict(size=11)))
         pch(fig)
     div()
@@ -487,7 +660,7 @@ if vista == "🌐  Global":
         lay(fig, coloraxis_showscale=False); pch(fig)
     div()
 
-    # Actividad principal — subsectores
+    # Actividad principal — subsectores + Pareto
     sec("Actividad Principal — Subsectores")
     db = (df_p.groupby(["sub_cod","sub_nom"]).size()
           .reset_index(name="RFCs").sort_values("RFCs", ascending=False))
@@ -523,7 +696,7 @@ if vista == "🌐  Global":
         pch(fig)
     div()
 
-    # Actividad secundaria — sectores
+    # Actividad secundaria
     if not df_s.empty:
         sec("Actividad Secundaria — Sectores")
         ds2 = (df_s.groupby(["sec_cod","sec_nom"])["rfc"].nunique()
@@ -531,11 +704,12 @@ if vista == "🌐  Global":
         ds2["pct"] = (ds2["RFCs"]/TOT*100).round(1)
         ga, gb = st.columns(2)
         with ga:
-            pch(bar_h(ds2.head(15), "RFCs","sec_cod","sec_nom","pct","Top 15 Sectores — Secundaria"))
+            pch(bar_h(ds2.head(15), "RFCs","sec_cod","sec_nom","pct",
+                      "Top 15 Sectores — Secundaria"))
         with gb:
             ds2["label"] = ds2["sec_cod"] + " · " + ds2["sec_nom"]
             fig = px.treemap(ds2, path=["label"], values="RFCs",
-                             title="Proporción de Sectores — Secundaria", color="RFCs",
+                             title="Proporción Sectores — Secundaria", color="RFCs",
                              color_continuous_scale=["#375623","#6AAB49"],
                              custom_data=["sec_cod","pct"])
             fig.update_traces(
@@ -589,6 +763,44 @@ if vista == "🌐  Global":
         pch(grafica_combos(combos, "Top 15 Combinaciones Principal → Secundaria"))
     div()
 
+    # CFDIs
+    sec("Análisis de CFDIs")
+    df_cfdis     = df_p[["rfc","company","tipo","sec_cod","sec_nom",
+                          "sub_cod","sub_nom","cfdis","sync_date"]].copy()
+    total_cfdis  = df_cfdis["cfdis"].sum()
+    prom_cfdis   = round(df_cfdis["cfdis"].mean(), 1)
+    max_cfdis    = df_cfdis["cfdis"].max()
+    sin_cfdis    = (df_cfdis["cfdis"]==0).sum()
+    rfc_max      = df_cfdis.loc[df_cfdis["cfdis"].idxmax(),"rfc"] if not df_cfdis.empty else "—"
+    fecha_min    = df_cfdis["sync_date"].dropna().min()
+    fecha_max    = df_cfdis["sync_date"].dropna().max()
+
+    k1,k2,k3,k4,k5 = st.columns(5)
+    with k1: kpi("Total CFDIs",       f"{total_cfdis:,}")
+    with k2: kpi("Promedio por RFC",  f"{prom_cfdis:,}")
+    with k3: kpi("Máximo en un RFC",  f"{max_cfdis:,}", rfc_max)
+    with k4: kpi("RFCs sin CFDIs",    f"{sin_cfdis:,}", f"{round(sin_cfdis/TOT*100,1)}%")
+    with k5: kpi("Última sync",       str(fecha_max) if fecha_max else "—",
+                 f"Desde {fecha_min}" if fecha_min else "")
+    st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+
+    seccion_cfdis_global(df_cfdis, TOT, total_cfdis)
+    div()
+
+    sec("Segmentación por Nivel de Actividad CFDI")
+    seccion_nivel_cfdis(df_cfdis, TOT)
+    div()
+
+    sec("Top RFCs por Volumen de CFDIs")
+    top_rfcs = (df_cfdis.sort_values("cfdis", ascending=False).head(20)
+                [["rfc","company","tipo","sec_nom","sub_nom","cfdis","sync_date"]]
+                .rename(columns={"rfc":"RFC","company":"Company","tipo":"Tipo",
+                                  "sec_nom":"Sector","sub_nom":"Subsector",
+                                  "cfdis":"CFDIs","sync_date":"Última Sync"}))
+    st.dataframe(top_rfcs, width="stretch", hide_index=True)
+    div()
+
+    # Duplicados
     if n_d > 0:
         sec(f"⚠️ RFCs en más de una Company — {n_d} encontrados")
         dd = dup[dup>1].reset_index().rename(columns={"company":"# Companies"})
@@ -632,6 +844,7 @@ else:
         unsafe_allow_html=True)
     div()
 
+    # KPIs empresa
     tr   = df_e["rfc"].nunique()
     ts   = df_e["sec_cod"].nunique()
     tb   = df_e["sub_cod"].nunique()
@@ -689,7 +902,7 @@ else:
         db2e["pct"] = (db2e["RFCs"]/tr*100).round(1)
         ea2, eb2 = st.columns(2)
         with ea2:
-            pch(bar_h(ds2e, "RFCs","sec_cod","sec_nom","pct","Sectores — Actividad Secundaria"))
+            pch(bar_h(ds2e, "RFCs","sec_cod","sec_nom","pct","Sectores — Secundaria"))
         with eb2:
             top_se2 = st.slider("Top N subsectores — secundaria", 5, min(20,len(db2e)), 10, key="sl_e2")
             pch(bar_h(db2e.head(top_se2), "RFCs","sub_cod","sub_nom","pct",
@@ -731,6 +944,78 @@ else:
         pch(grafica_combos(combos_e, "Combinaciones Principal → Secundaria más frecuentes"))
     div()
 
+    # CFDIs empresa
+    sec(f"Análisis de CFDIs — Company {emp_sel}")
+    df_ce    = df_e[["rfc","tipo","sec_cod","sec_nom","sub_cod","sub_nom",
+                     "cfdis","sync_date"]].copy()
+    tot_ce   = df_ce["cfdis"].sum()
+    prom_ce  = round(df_ce["cfdis"].mean(), 1)
+    max_ce   = df_ce["cfdis"].max()
+    sin_ce   = (df_ce["cfdis"]==0).sum()
+    rfc_ce   = df_ce.loc[df_ce["cfdis"].idxmax(),"rfc"] if not df_ce.empty else "—"
+
+    k1,k2,k3,k4 = st.columns(4)
+    with k1: kpi("Total CFDIs",       f"{tot_ce:,}")
+    with k2: kpi("Promedio por RFC",  f"{prom_ce:,}")
+    with k3: kpi("Máximo en un RFC",  f"{max_ce:,}", rfc_ce)
+    with k4: kpi("RFCs sin CFDIs",    f"{sin_ce:,}", f"{round(sin_ce/tr*100,1)}%")
+    st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+
+    csub_e = (df_ce.groupby(["sub_cod","sub_nom"])
+              .agg(total_cfdis=("cfdis","sum"),
+                   n_rfcs=("rfc","count"),
+                   prom=("cfdis","mean"))
+              .reset_index().sort_values("total_cfdis", ascending=False))
+    csub_e["prom"] = csub_e["prom"].round(1)
+    csub_e["pct"]  = (csub_e["total_cfdis"]/tot_ce*100).round(1) if tot_ce else 0
+
+    ea_c, eb_c = st.columns(2)
+    with ea_c:
+        fig = go.Figure(go.Bar(
+            x=csub_e["total_cfdis"], y=csub_e["sub_cod"].astype(str),
+            orientation="h",
+            marker=dict(color=csub_e["total_cfdis"],
+                        colorscale=[[0,"#1F4E79"],[1,"#60A5FA"]]),
+            customdata=list(zip(csub_e["sub_nom"], csub_e["pct"])),
+            text=csub_e["pct"].astype(str)+"%", textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>"
+                          "Total: %{x:,}<br>%{customdata[1]}%<extra></extra>",
+        ))
+        lay(fig, title="Total CFDIs por Subsector", xaxis=dict(**GRID),
+            yaxis=dict(type="category", categoryorder="total ascending",
+                       gridcolor="#2A3441", tickfont=dict(size=11)))
+        pch(fig)
+    with eb_c:
+        fig = go.Figure(go.Bar(
+            x=csub_e["prom"], y=csub_e["sub_cod"].astype(str),
+            orientation="h",
+            marker=dict(color=csub_e["prom"],
+                        colorscale=[[0,"#375623"],[1,"#6AAB49"]]),
+            customdata=list(zip(csub_e["sub_nom"], csub_e["n_rfcs"])),
+            text=csub_e["prom"].astype(str), textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>"
+                          "Promedio: %{x:,}<br>RFCs: %{customdata[1]}<extra></extra>",
+        ))
+        lay(fig, title="Promedio CFDIs por RFC — por Subsector", xaxis=dict(**GRID),
+            yaxis=dict(type="category", categoryorder="total ascending",
+                       gridcolor="#2A3441", tickfont=dict(size=11)))
+        pch(fig)
+
+    sec("Segmentación por Nivel de Actividad CFDI")
+    seccion_nivel_cfdis(df_ce, tr, key_suffix="_e")
+
+    st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+    top_ce = (df_ce.sort_values("cfdis", ascending=False).head(20)
+              [["rfc","tipo","sec_nom","sub_nom","cfdis","sync_date"]]
+              .rename(columns={"rfc":"RFC","tipo":"Tipo","sec_nom":"Sector",
+                               "sub_nom":"Subsector","cfdis":"CFDIs",
+                               "sync_date":"Última Sync"}))
+    st.markdown("**Top 20 RFCs por volumen de CFDIs**")
+    st.dataframe(top_ce, width="stretch", hide_index=True)
+    div()
+
     # Comparativo
     if comparar and emp_cmp:
         sec(f"Comparativo — Company {emp_sel}  vs  Company {emp_cmp}")
@@ -751,31 +1036,38 @@ else:
                      custom_data=["sub_nom"])
         fig.update_traces(
             hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>RFCs: %{x}<extra></extra>")
-        lay(fig, xaxis=dict(title="RFCs",**GRID),
+        lay(fig, xaxis=dict(**GRID),
             yaxis=dict(type="category", categoryorder="total ascending",
                        gridcolor="#2A3441"))
         pch(fig)
 
         tc2 = df_c2["rfc"].nunique()
+        tot_c2 = df_c2["cfdis"].sum()
         st.markdown("**Métricas comparadas**")
         st.dataframe(pd.DataFrame({
-            "Métrica": ["Total RFCs","Sectores únicos",
-                        "Subsectores únicos","Persona Moral","Persona Física"],
-            f"Company {emp_sel}": [tr, ts, tb, nm, nf],
-            f"Company {emp_cmp}": [tc2, df_c2["sec_cod"].nunique(),
+            "Métrica": ["Total RFCs","Sectores únicos","Subsectores únicos",
+                        "Persona Moral","Persona Física","Total CFDIs","Promedio CFDIs"],
+            f"Company {emp_sel}": [tr, ts, tb, nm, nf, tot_ce,
+                                   round(tot_ce/tr,1) if tr else 0],
+            f"Company {emp_cmp}": [tc2,
+                                   df_c2["sec_cod"].nunique(),
                                    df_c2["sub_cod"].nunique(),
                                    (df_c2["tipo"]=="Persona Moral").sum(),
-                                   (df_c2["tipo"]=="Persona Física").sum()],
+                                   (df_c2["tipo"]=="Persona Física").sum(),
+                                   tot_c2,
+                                   round(tot_c2/tc2,1) if tc2 else 0],
         }), width="stretch", hide_index=True)
         div()
 
     # Tabla detalle
     with st.expander(f"📋  Ver detalle completo de RFCs — Company {emp_sel}"):
         st.dataframe(
-            df_e_a[["rfc","tipo","tipo_act","sec_cod","sec_nom","sub_cod","sub_nom","pct"]]
+            df_e_a[["rfc","tipo","tipo_act","sec_cod","sec_nom",
+                    "sub_cod","sub_nom","pct","cfdis","sync_date"]]
             .rename(columns={"rfc":"RFC","tipo":"Tipo Persona","tipo_act":"Actividad",
                              "sec_cod":"Cód. Sector","sec_nom":"Sector",
                              "sub_cod":"Cód. Subsector","sub_nom":"Subsector",
-                             "pct":"% Actividad"})
+                             "pct":"% Actividad","cfdis":"CFDIs",
+                             "sync_date":"Última Sync"})
             .sort_values(["RFC","% Actividad"], ascending=[True,False]),
             width="stretch", hide_index=True)
